@@ -420,13 +420,13 @@ io.on('connection', (socket) => {
 
 function gameLoop() {
     if (gameState.isGameOver) return; // Pause game logic when game is over
-    gameState.diffs = [];
     gameState.updateBombs();
     gameState.updateExplosions();
     gameState.checkForWinner();
 
     if (gameState.diffs.length > 0) {
         io.emit('gameUpdate', gameState.diffs);
+        gameState.diffs = [];
     }
 }
 
