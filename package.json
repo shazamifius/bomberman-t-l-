@@ -1,0 +1,22 @@
+{
+  "name": "bomberman-local-multiplayer",
+  "version": "1.0.0",
+  "description": "A local multiplayer Bomberman game using Node.js and Socket.IO",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "bomberman",
+    "socket.io",
+    "node",
+    "local-multiplayer"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  }
+}
