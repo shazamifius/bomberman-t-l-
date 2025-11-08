@@ -2,23 +2,24 @@
 <html>
 <head>
     <title>Bomberman Controller</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
 </head>
 <body class="controller-body">
-    <div id="join-screen">
-        <h1>Bomberman</h1>
+    <div id="join-screen" class="screen">
+        <h1>Bomber Planet</h1>
         <input type="text" id="nickname" placeholder="Enter Nickname" maxlength="10">
         <button id="join-btn">Join Game</button>
     </div>
 
-    <div id="game-controls" style="display: none;">
+    <div id="game-controls" class="screen" style="display: none;">
+        <div id="player-info">Player</div>
         <div class="d-pad">
-            <button class="control-btn" data-direction="up">⬆️</button>
-            <button class="control-btn" data-direction="left">⬅️</button>
-            <button class="control-btn" data-direction="right">➡️</button>
-            <button class="control-btn" data-direction="down">⬇️</button>
+            <button class="control-btn" data-direction="up">▲</button>
+            <button class="control-btn" data-direction="left">◀</button>
+            <button class="control-btn" data-direction="right">▶</button>
+            <button class="control-btn" data-direction="down">▼</button>
         </div>
         <div class="action-pad">
             <button class="bomb-btn" id="bomb-btn">💣</button>
@@ -34,15 +35,15 @@
         const nicknameInput = document.getElementById('nickname');
         const dpadButtons = document.querySelectorAll('.control-btn');
         const bombBtn = document.getElementById('bomb-btn');
+        const playerInfoEl = document.getElementById('player-info');
+        const body = document.body;
 
         let lastMoveTime = 0;
-        const MOVE_COOLDOWN = 200; // 200ms
+        const MOVE_COOLDOWN = 200;
 
         joinBtn.addEventListener('click', () => {
             const nickname = nicknameInput.value.trim();
             socket.emit('joinGame', nickname);
-            joinScreen.style.display = 'none';
-            gameControls.style.display = 'flex';
         });
 
         dpadButtons.forEach(button => {
@@ -62,16 +63,27 @@
             if (navigator.vibrate) navigator.vibrate(100);
         });
 
+        // Listen for the 'playerJoined' event specifically for this client
+        socket.on('gameUpdate', (diffs) => {
+            for (const diff of diffs) {
+                if(diff.type === 'playerJoined' && diff.data.id === socket.id) {
+                    joinScreen.style.display = 'none';
+                    gameControls.style.display = 'flex';
+                    playerInfoEl.textContent = diff.data.nickname;
+                    body.style.setProperty('--player-color', diff.data.color);
+                }
+            }
+        });
+
         socket.on('gameFull', () => {
             alert("Sorry, the game is full!");
-            joinScreen.style.display = 'flex';
-            gameControls.style.display = 'none';
         });
 
         socket.on('disconnect', () => {
             alert("Disconnected from server.");
             joinScreen.style.display = 'flex';
             gameControls.style.display = 'none';
+            body.style.backgroundColor = '#101010';
         });
     </script>
 </body>

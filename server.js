@@ -6,59 +6,83 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 // Constants
+// ... (same as before)
 const PORT = 3000;
-const GRID_WIDTH = 15;
-const GRID_HEIGHT = 13;
+const GRID_WIDTH = 21;
+const GRID_HEIGHT = 21;
 const TICK_RATE = 20;
 const BOMB_TIMER = 3000;
 const EXPLOSION_DURATION = 500;
-const EXPLOSION_RADIUS = 3;
 const GAME_RESTART_DELAY = 5000;
+const POWER_UP_SPAWN_CHANCE = 0.3;
 
 const TILE = { EMPTY: 0, SOLID: 1, SOFT: 2 };
+const POWER_UP_TYPES = {
+    SPEED: 'speed',
+    BOMB_COUNT: 'bomb_count',
+    BOMB_RANGE: 'bomb_range',
+};
+const ALL_POWER_UPS = Object.values(POWER_UP_TYPES);
 const PLAYER_SPAWNS = [
-    // ... (same as before)
-    { x: 1, y: 1, color: '#2ECC40' }, // Top-left, Green
-    { x: GRID_WIDTH - 2, y: GRID_HEIGHT - 2, color: '#FF4136' }, // Bottom-right, Red
-    { x: GRID_WIDTH - 2, y: 1, color: '#0074D9' }, // Top-right, Blue
-    { x: 1, y: GRID_HEIGHT - 2, color: '#FFDC00' }, // Bottom-left, Yellow
+    { x: 1, y: 1 },
+    { x: GRID_WIDTH - 2, y: GRID_HEIGHT - 2 },
+    { x: GRID_WIDTH - 2, y: 1 },
+    { x: 1, y: GRID_HEIGHT - 2 },
 ];
+const PLAYER_COLORS = [
+    '#2ECC40', '#FF4136', '#0074D9', '#FFDC00', '#FF851B', '#7FDBFF', '#B10DC9', '#F012BE',
+    '#3D9970', '#85144b', '#39CCCC', '#01FF70', '#AAAAAA', '#DDDDDD', '#FFFFFF', '#111111', '#E6E6FA'
+];
+
 
 class GameState {
     constructor() {
-        // ... (same properties as before)
+        // ... (properties)
         this.players = {};
         this.bombs = {};
         this.explosions = {};
+        this.powerUps = {};
         this.grid = [];
         this.winner = null;
         this.isGameOver = false;
+        this.diffs = [];
+    }
+
+    queueUpdate(type, data) {
+        this.diffs.push({ type, data });
     }
 
     reset() {
-        this.isGameOver = false;
+        this.isGameOver = true; // Game is paused until countdown finishes
         this.winner = null;
+        this.bombs = {};
+        this.explosions = {};
+        this.powerUps = {};
         this.initializeGrid();
-        // Respawn players who were connected
+
         const connectedPlayers = Object.values(this.players);
         this.players = {};
         connectedPlayers.forEach((p, i) => {
-            const spawn = PLAYER_SPAWNS[i];
+            const spawn = this.findSpawnPoint(i);
             this.players[p.id] = {
                 ...p,
                 x: spawn.x,
                 y: spawn.y,
                 isAlive: true,
+                bombsMax: 1,
                 bombsPlaced: 0,
+                explosionRadius: 2,
+                speed: 1,
+                direction: 'down',
             };
         });
+        this.queueUpdate('fullState', this.getStateForClient());
     }
 
     initializeGrid() {
-        // ... (same as before)
+        // ... (grid initialization)
         this.grid = Array(GRID_HEIGHT).fill(null).map(() => Array(GRID_WIDTH).fill(TILE.EMPTY));
 
-        // Create solid blocks
         for (let y = 0; y < GRID_HEIGHT; y++) {
             for (let x = 0; x < GRID_WIDTH; x++) {
                 if (y === 0 || y === GRID_HEIGHT - 1 || x === 0 || x === GRID_WIDTH - 1 || (x % 2 === 0 && y % 2 === 0)) {
@@ -67,15 +91,15 @@ class GameState {
             }
         }
 
-        // Define spawn zones
-        const spawnZones = [
-            { x: 1, y: 1 }, { x: 2, y: 1 }, { x: 1, y: 2 }, // Top-left
-            { x: GRID_WIDTH - 2, y: 1 }, { x: GRID_WIDTH - 3, y: 1 }, { x: GRID_WIDTH - 2, y: 2 }, // Top-right
-            { x: 1, y: GRID_HEIGHT - 2 }, { x: 1, y: GRID_HEIGHT - 3 }, { x: 2, y: GRID_HEIGHT - 2 }, // Bottom-left
-            { x: GRID_WIDTH - 2, y: GRID_HEIGHT - 2 }, { x: GRID_WIDTH - 3, y: GRID_HEIGHT - 2 }, { x: GRID_WIDTH - 2, y: GRID_HEIGHT - 3 }, // Bottom-right
-        ];
+        let spawnZones = [];
+        PLAYER_SPAWNS.forEach(spawn => {
+            for(let dy = -1; dy <= 1; dy++) {
+                for(let dx = -1; dx <=1; dx++) {
+                    spawnZones.push({x: spawn.x + dx, y: spawn.y + dy});
+                }
+            }
+        });
 
-        // Create soft blocks
         for (let y = 1; y < GRID_HEIGHT - 1; y++) {
             for (let x = 1; x < GRID_WIDTH - 1; x++) {
                 if (this.grid[y][x] === TILE.EMPTY) {
@@ -89,35 +113,40 @@ class GameState {
     }
 
     addPlayer(id, nickname) {
-        // ... (same as before)
+        // ... (addPlayer logic)
         const playerCount = Object.keys(this.players).length;
-        if (playerCount >= 4) return null; // Game is full
+        if (playerCount >= 17) return null;
 
-        const spawn = PLAYER_SPAWNS[playerCount];
+        const spawn = this.findSpawnPoint(playerCount);
         const player = {
             id,
             nickname: nickname || `Player ${playerCount + 1}`,
             x: spawn.x,
             y: spawn.y,
-            color: spawn.color,
+            color: PLAYER_COLORS[playerCount % PLAYER_COLORS.length],
             isAlive: true,
             bombsMax: 1,
             bombsPlaced: 0,
+            explosionRadius: 2,
+            speed: 1,
+            direction: 'down',
         };
         this.players[id] = player;
+        this.queueUpdate('playerJoined', player);
         return player;
     }
 
     removePlayer(id) {
-        // ... (same as before)
         delete this.players[id];
+        this.queueUpdate('playerLeft', { id });
     }
 
     movePlayer(id, direction) {
-        // ... (same as before)
         if(this.isGameOver) return;
         const player = this.players[id];
         if (!player || !player.isAlive) return;
+
+        player.direction = direction; // Set direction regardless of move success
 
         let { x, y } = player;
         switch (direction) {
@@ -127,15 +156,21 @@ class GameState {
             case 'right': x++; break;
         }
 
-        // Check for valid movement
-        if (this.isPassable(x, y)) {
-            player.x = x;
-            player.y = y;
+        const nextX = x;
+        const nextY = y;
+
+        if (this.isPassable(nextX, nextY)) {
+            player.x = nextX;
+            player.y = nextY;
+            this.queueUpdate('playerMoved', { id, x: nextX, y: nextY, direction });
+            this.checkPowerUpCollision(id);
+        } else {
+            this.queueUpdate('playerFaced', { id, direction });
         }
     }
 
     isPassable(x, y) {
-        // ... (same as before)
+        // ... (isPassable logic)
         if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) return false;
         if (this.grid[y][x] === TILE.SOLID || this.grid[y][x] === TILE.SOFT) return false;
         for (const bombId in this.bombs) {
@@ -145,8 +180,8 @@ class GameState {
         return true;
     }
 
+    // ... (rest of methods are the same)
     placeBomb(playerId) {
-        // ... (same as before)
         if(this.isGameOver) return;
         const player = this.players[playerId];
         if (!player || !player.isAlive || player.bombsPlaced >= player.bombsMax) {
@@ -154,18 +189,20 @@ class GameState {
         }
 
         const bombId = `${playerId}-${Date.now()}`;
-        this.bombs[bombId] = {
+        const bomb = {
             id: bombId,
             x: player.x,
             y: player.y,
             ownerId: playerId,
             timer: Date.now() + BOMB_TIMER,
+            radius: player.explosionRadius,
         };
+        this.bombs[bombId] = bomb;
         player.bombsPlaced++;
+        this.queueUpdate('bombPlaced', bomb);
     }
 
     updateBombs() {
-        // ... (same as before)
         const now = Date.now();
         const explodedBombs = [];
         for (const bombId in this.bombs) {
@@ -174,22 +211,20 @@ class GameState {
                 delete this.bombs[bombId];
             }
         }
-        explodedBombs.forEach(bomb => this.createExplosion(bomb.x, bomb.y, bomb.ownerId));
+        explodedBombs.forEach(bomb => this.createExplosion(bomb.x, bomb.y, bomb.ownerId, bomb.radius));
     }
 
-    createExplosion(x, y, ownerId) {
-        // ... (same as before)
+    createExplosion(x, y, ownerId, radius) {
         const explosionId = `${x},${y}-${Date.now()}`;
         const explosion = {
             id: explosionId,
             tiles: { [`${x},${y}`]: true },
             createdAt: Date.now(),
         };
-        this.explosions[explosionId] = explosion;
 
         const directions = [{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 }];
         for (const dir of directions) {
-            for (let i = 1; i <= EXPLOSION_RADIUS; i++) {
+            for (let i = 1; i <= radius; i++) {
                 const newX = x + dir.dx * i;
                 const newY = y + dir.dy * i;
 
@@ -200,23 +235,25 @@ class GameState {
 
                 explosion.tiles[`${newX},${newY}`] = true;
 
-                // Chain reaction
                 for (const bombId in this.bombs) {
                     const bomb = this.bombs[bombId];
                     if (bomb.x === newX && bomb.y === newY) {
-                        this.createExplosion(bomb.x, bomb.y, bomb.ownerId);
+                        this.createExplosion(bomb.x, bomb.y, bomb.ownerId, bomb.radius);
                         delete this.bombs[bombId];
                     }
                 }
 
                 if (tile === TILE.SOFT) {
                     this.grid[newY][newX] = TILE.EMPTY;
+                    this.queueUpdate('tileChanged', {x: newX, y: newY, type: TILE.EMPTY});
+                    this.trySpawnPowerUp(newX, newY);
                     break;
                 }
             }
         }
+        this.explosions[explosionId] = explosion;
+        this.queueUpdate('explosion', explosion);
 
-        // Handle player bomb count reset
         const owner = this.players[ownerId];
         if (owner) {
             owner.bombsPlaced--;
@@ -224,19 +261,17 @@ class GameState {
     }
 
     updateExplosions() {
-        // ... (same as before)
         const now = Date.now();
-        // Player damage
         for (const playerId in this.players) {
             const player = this.players[playerId];
             if (!player.isAlive) continue;
             for (const explosionId in this.explosions) {
                 if (this.explosions[explosionId].tiles[`${player.x},${player.y}`]) {
                     player.isAlive = false;
+                    this.queueUpdate('playerDied', { id: playerId });
                 }
             }
         }
-        // Cleanup expired explosions
         for (const explosionId in this.explosions) {
             if (now >= this.explosions[explosionId].createdAt + EXPLOSION_DURATION) {
                 delete this.explosions[explosionId];
@@ -246,28 +281,111 @@ class GameState {
 
     checkForWinner() {
         if(this.isGameOver) return;
-
         const alivePlayers = Object.values(this.players).filter(p => p.isAlive);
         const totalPlayers = Object.keys(this.players).length;
 
         if (totalPlayers >= 2 && alivePlayers.length <= 1) {
             this.isGameOver = true;
             this.winner = alivePlayers.length === 1 ? alivePlayers[0].nickname : "Draw!";
+            this.queueUpdate('gameOver', { winner: this.winner });
 
             setTimeout(() => {
-                this.reset();
+                this.startRound();
             }, GAME_RESTART_DELAY);
         }
     }
+
+    getStateForClient() {
+        return {
+            players: this.players,
+            bombs: this.bombs,
+            explosions: this.explosions,
+            grid: this.grid,
+            powerUps: this.powerUps,
+            winner: this.winner,
+        };
+    }
+
+    trySpawnPowerUp(x, y) {
+        if (Math.random() < POWER_UP_SPAWN_CHANCE) {
+            const type = ALL_POWER_UPS[Math.floor(Math.random() * ALL_POWER_UPS.length)];
+            const id = `powerup-${x}-${y}`;
+            const powerUp = { id, x, y, type };
+            this.powerUps[id] = powerUp;
+            this.queueUpdate('powerUpSpawned', powerUp);
+        }
+    }
+
+    checkPowerUpCollision(playerId) {
+        const player = this.players[playerId];
+        if (!player) return;
+
+        const powerUpId = Object.keys(this.powerUps).find(id => {
+            const p = this.powerUps[id];
+            return p.x === player.x && p.y === player.y;
+        });
+
+        if (powerUpId) {
+            const powerUp = this.powerUps[powerUpId];
+            switch (powerUp.type) {
+                case POWER_UP_TYPES.SPEED:
+                    player.speed = Math.min(player.speed + 0.5, 3); // Cap speed
+                    break;
+                case POWER_UP_TYPES.BOMB_COUNT:
+                    player.bombsMax++;
+                    break;
+                case POWER_UP_TYPES.BOMB_RANGE:
+                    player.explosionRadius++;
+                    break;
+            }
+            delete this.powerUps[powerUpId];
+            this.queueUpdate('powerUpCollected', { id: powerUpId, playerId: player.id });
+        }
+    }
+
+    findSpawnPoint(playerIndex) {
+        if (playerIndex < 4) {
+            return PLAYER_SPAWNS[playerIndex];
+        }
+
+        let bestSpot = { x: -1, y: -1 };
+        let maxDist = -1;
+
+        for (let y = 1; y < GRID_HEIGHT - 1; y++) {
+            for (let x = 1; x < GRID_WIDTH - 1; x++) {
+                if (this.grid[y][x] === TILE.EMPTY) {
+                    let minDistToPlayer = Infinity;
+                    const activePlayers = Object.values(this.players);
+                    if (activePlayers.length === 0) {
+                         return {x, y};
+                    }
+
+                    for (const player of activePlayers) {
+                        const dist = Math.hypot(x - player.x, y - player.y);
+                        if (dist < minDistToPlayer) {
+                            minDistToPlayer = dist;
+                        }
+                    }
+
+                    if (minDistToPlayer > maxDist) {
+                        maxDist = minDistToPlayer;
+                        bestSpot = { x, y };
+                    }
+                }
+            }
+        }
+        return bestSpot;
+    }
 }
 
-// ... (Express and Socket.IO setup remains the same)
+
+// --- Server Setup ---
+// ... (same as before)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
 const gameState = new GameState();
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -275,8 +393,9 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'game.htm
 app.get('/controller', (req, res) => res.sendFile(path.join(__dirname, 'public', 'controller.html')));
 
 io.on('connection', (socket) => {
-    // ... (join, move, disconnect, bomb)
     console.log(`User connected: ${socket.id}`);
+
+    socket.emit('fullState', gameState.getStateForClient());
 
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
@@ -285,9 +404,7 @@ io.on('connection', (socket) => {
 
     socket.on('joinGame', (nickname) => {
         const player = gameState.addPlayer(socket.id, nickname);
-        if (player) {
-            console.log(`${player.nickname} joined the game.`);
-        } else {
+        if (!player) {
             socket.emit('gameFull');
         }
     });
@@ -302,16 +419,38 @@ io.on('connection', (socket) => {
 });
 
 function gameLoop() {
+    if (gameState.isGameOver) return; // Pause game logic when game is over
+    gameState.diffs = [];
     gameState.updateBombs();
     gameState.updateExplosions();
     gameState.checkForWinner();
-    io.emit('gameState', gameState);
+
+    if (gameState.diffs.length > 0) {
+        io.emit('gameUpdate', gameState.diffs);
+    }
 }
 
+// --- Add startRound to GameState class ---
+GameState.prototype.startRound = function() {
+    this.reset();
+    let count = 5;
+    const countdownInterval = setInterval(() => {
+        this.queueUpdate('countdown', { value: count });
+        io.emit('gameUpdate', this.diffs);
+        this.diffs = [];
+        count--;
+        if (count < 0) {
+            clearInterval(countdownInterval);
+            this.isGameOver = false; // Start the game
+        }
+    }, 1000);
+};
+
+
 server.listen(PORT, () => {
-    gameState.reset();
+    gameState.startRound();
     setInterval(gameLoop, 1000 / TICK_RATE);
-    // ... (IP address logging)
+
     const networkInterfaces = os.networkInterfaces();
     let localIp = '';
     Object.keys(networkInterfaces).forEach(ifaceName => {

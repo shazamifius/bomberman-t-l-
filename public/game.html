@@ -21,56 +21,206 @@
         const messageEl = document.getElementById('message');
         const socket = io();
 
-        const GRID_WIDTH = 15;
-        const GRID_HEIGHT = 13;
-        const TILE_SIZE = 48;
+        const GRID_WIDTH = 21;
+        const GRID_HEIGHT = 21;
+        const TILE_SIZE = 40;
 
         canvas.width = GRID_WIDTH * TILE_SIZE;
         canvas.height = GRID_HEIGHT * TILE_SIZE;
 
-        let gameState = { players: {}, bombs: {}, explosions: {}, grid: [], winner: null };
+        let gameState = { players: {}, bombs: {}, explosions: {}, grid: [], powerUps: {}, winner: null, countdown: null };
+        window.gameState = gameState; // Expose for verification
+        let playerAnimState = {};
 
-        const TILE_COLORS = {
-            0: '#1a1a1a', // EMPTY
-            1: '#4f4f4f', // SOLID
-            2: '#a0522d', // SOFT
+        // --- Asset Loading ---
+        const tileset = new Image();
+        tileset.src = '/assets/tileset.png';
+        const playerSprite = new Image();
+        playerSprite.src = '/assets/player.png';
+        const powerUpSprite = new Image();
+        powerUpSprite.src = '/assets/powerups.png'; // Assuming a sprite sheet for powerups
+
+        const TILE_MAP = {
+            EMPTY: { sx: 0, sy: 0 },
+            SOLID: { sx: 16, sy: 0 },
+            SOFT: { sx: 32, sy: 0 },
+        };
+        const SPRITE_SIZE = 16;
+        const ANIM_DIRECTIONS = { 'down': 0, 'up': 1, 'left': 2, 'right': 3 };
+        const POWER_UP_MAP = {
+            'speed': { sx: 0, sy: 0 },
+            'bomb_count': { sx: 0, sy: 16 },
+            'bomb_range': { sx: 0, sy: 32 },
         };
 
-        socket.on('gameState', (state) => {
+        socket.on('fullState', (state) => {
             gameState = state;
-            draw();
+            window.gameState = state;
+            Object.keys(state.players).forEach(id => {
+                playerAnimState[id] = { frame: 0, lastMove: 0 };
+            });
+            requestAnimationFrame(draw);
         });
+
+        socket.on('gameUpdate', (diffs) => {
+            applyDiffs(diffs);
+            requestAnimationFrame(draw);
+        });
+
+        function applyDiffs(diffs) {
+            for (const diff of diffs) {
+                switch (diff.type) {
+                    case 'fullState':
+                        gameState = diff.data;
+                        window.gameState = diff.data;
+                        Object.keys(diff.data.players).forEach(id => {
+                            playerAnimState[id] = { frame: 0, lastMove: 0 };
+                        });
+                        break;
+                    case 'playerJoined':
+                        gameState.players[diff.data.id] = diff.data;
+                        playerAnimState[diff.data.id] = { frame: 0, lastMove: 0 };
+                        break;
+                    case 'playerLeft':
+                        delete gameState.players[diff.data.id];
+                        delete playerAnimState[diff.data.id];
+                        break;
+                    case 'playerMoved':
+                        if (gameState.players[diff.data.id]) {
+                            const anim = playerAnimState[diff.data.id];
+                            gameState.players[diff.data.id].x = diff.data.x;
+                            gameState.players[diff.data.id].y = diff.data.y;
+                            gameState.players[diff.data.id].direction = diff.data.direction;
+                            anim.frame = (anim.frame + 1) % 4; // 4 frames for walking
+                            anim.lastMove = Date.now();
+                        }
+                        break;
+                    case 'playerFaced':
+                         if (gameState.players[diff.data.id]) {
+                            gameState.players[diff.data.id].direction = diff.data.direction;
+                         }
+                        break;
+                    // ... (other cases remain the same)
+                    case 'playerDied':
+                        if (gameState.players[diff.data.id]) {
+                            gameState.players[diff.data.id].isAlive = false;
+                            sound.playerDied();
+                        }
+                        break;
+                    case 'bombPlaced':
+                        gameState.bombs[diff.data.id] = diff.data;
+                        sound.bombPlaced();
+                        break;
+                    case 'explosion':
+                        gameState.explosions[diff.data.id] = diff.data;
+                        sound.explosion();
+                        for(const bombId in gameState.bombs) {
+                            if(gameState.bombs[bombId].x === diff.data.x && gameState.bombs[bombId].y === diff.data.y) {
+                                delete gameState.bombs[bombId];
+                            }
+                        }
+                        break;
+                    case 'tileChanged':
+                        gameState.grid[diff.data.y][diff.data.x] = diff.data.type;
+                        break;
+                    case 'powerUpSpawned':
+                        gameState.powerUps[diff.data.id] = diff.data;
+                        break;
+                    case 'powerUpCollected':
+                        delete gameState.powerUps[diff.data.id];
+                        // Player stats are updated in their respective objects, so no need to handle here
+                        break;
+                    case 'gameOver':
+                        gameState.winner = diff.data.winner;
+                        gameState.countdown = null; // Clear countdown on game over
+                        sound.victory();
+                        setTimeout(() => gameState.winner = null, 5000); // Display winner for 5s
+                        break;
+                    case 'countdown':
+                        gameState.countdown = diff.data.value;
+                        break;
+                }
+            }
+        }
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
             if (!gameState.grid || gameState.grid.length === 0) return;
 
-            // Draw grid and walls
-            for (let y = 0; y < GRID_HEIGHT; y++) {
+            // ... (Draw grid and bombs)
+             for (let y = 0; y < GRID_HEIGHT; y++) {
                 for (let x = 0; x < GRID_WIDTH; x++) {
                     const tileType = gameState.grid[y][x];
-                    ctx.fillStyle = TILE_COLORS[tileType];
-                    ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    let tile;
+                    switch(tileType) {
+                        case 1: tile = TILE_MAP.SOLID; break;
+                        case 2: tile = TILE_MAP.SOFT; break;
+                        default: tile = TILE_MAP.EMPTY; break;
+                    }
+                    ctx.drawImage(tileset, tile.sx, tile.sy, SPRITE_SIZE, SPRITE_SIZE, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
             }
 
-            // Draw bombs
             for (const id in gameState.bombs) {
                 const bomb = gameState.bombs[id];
                 ctx.fillStyle = '#000';
                 ctx.beginPath();
                 ctx.arc(bomb.x * TILE_SIZE + TILE_SIZE / 2, bomb.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 2.5, 0, 2 * Math.PI);
                 ctx.fill();
-                ctx.fillStyle = '#FF4136';
-                ctx.beginPath();
-                ctx.arc(bomb.x * TILE_SIZE + TILE_SIZE / 2, bomb.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 5, 0, 2 * Math.PI);
-                ctx.fill();
             }
 
-            // Draw explosions
+            // Draw players with animation
+            for (const id in gameState.players) {
+                const player = gameState.players[id];
+                if (!player.isAlive) continue;
+
+                const anim = playerAnimState[id];
+                // Revert to idle frame if not moved recently
+                if (Date.now() - anim.lastMove > 200) {
+                    anim.frame = 0;
+                }
+
+                const directionRow = ANIM_DIRECTIONS[player.direction] || 0;
+                ctx.drawImage(
+                    playerSprite,
+                    anim.frame * SPRITE_SIZE, // sx
+                    directionRow * SPRITE_SIZE, // sy
+                    SPRITE_SIZE, SPRITE_SIZE,
+                    player.x * TILE_SIZE, player.y * TILE_SIZE,
+                    TILE_SIZE, TILE_SIZE
+                );
+
+                // Draw Nickname and Powerups
+                ctx.fillStyle = 'white';
+                ctx.font = '10px "Press Start 2P"';
+                ctx.textAlign = 'center';
+                ctx.fillText(player.nickname, player.x * TILE_SIZE + TILE_SIZE / 2, player.y * TILE_SIZE - 5);
+
+                let powerUpOffset = 0;
+                if (player.bombsMax > 1) {
+                     const icon = POWER_UP_MAP['bomb_count'];
+                     ctx.drawImage(powerUpSprite, icon.sx, icon.sy, SPRITE_SIZE, SPRITE_SIZE, player.x * TILE_SIZE + powerUpOffset, player.y * TILE_SIZE - 15, 10, 10);
+                     powerUpOffset += 12;
+                }
+                if (player.explosionRadius > 2) {
+                    const icon = POWER_UP_MAP['bomb_range'];
+                    ctx.drawImage(powerUpSprite, icon.sx, icon.sy, SPRITE_SIZE, SPRITE_SIZE, player.x * TILE_SIZE + powerUpOffset, player.y * TILE_SIZE - 15, 10, 10);
+                    powerUpOffset += 12;
+                }
+                if (player.speed > 1) {
+                    const icon = POWER_UP_MAP['speed'];
+                     ctx.drawImage(powerUpSprite, icon.sx, icon.sy, SPRITE_SIZE, SPRITE_SIZE, player.x * TILE_SIZE + powerUpOffset, player.y * TILE_SIZE - 15, 10, 10);
+                }
+            }
+
+            // ... (Draw explosions and winner message)
+            const now = Date.now();
             for (const id in gameState.explosions) {
-                const explosion = gameState.explosions[id];
+                 const explosion = gameState.explosions[id];
+                 if(now >= explosion.createdAt + 500) {
+                    delete gameState.explosions[id];
+                    continue;
+                }
                 ctx.fillStyle = 'rgba(255, 220, 0, 0.8)';
                 for(const tileKey in explosion.tiles) {
                     const [x, y] = tileKey.split(',').map(Number);
@@ -78,22 +228,67 @@
                 }
             }
 
-            // Draw players
-            for (const id in gameState.players) {
-                const player = gameState.players[id];
-                if (!player.isAlive) continue;
-                ctx.fillStyle = player.color;
-                ctx.fillRect(player.x * TILE_SIZE, player.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            // Draw PowerUps
+            for (const id in gameState.powerUps) {
+                const powerUp = gameState.powerUps[id];
+                const powerUpGfx = POWER_UP_MAP[powerUp.type];
+                if (powerUpGfx) {
+                    ctx.drawImage(
+                        powerUpSprite,
+                        powerUpGfx.sx, powerUpGfx.sy, SPRITE_SIZE, SPRITE_SIZE,
+                        powerUp.x * TILE_SIZE, powerUp.y * TILE_SIZE,
+                        TILE_SIZE, TILE_SIZE
+                    );
+                }
             }
 
-            // Show winner message
+            // Draw Winner / Countdown Overlay
             if (gameState.winner) {
-                messageEl.innerHTML = `🏆 ${gameState.winner} Wins!`;
-                overlay.style.display = 'flex';
-            } else {
-                overlay.style.display = 'none';
+                drawOverlayMessage(`🏆 ${gameState.winner} Wins!`);
+            } else if (gameState.countdown) {
+                drawOverlayMessage(`Game starting in ${gameState.countdown}`);
             }
         }
+
+        function drawOverlayMessage(message) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white';
+            ctx.font = '48px "Press Start 2P"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+        }
+
+        // --- Sound Engine ---
+        class Sound {
+            constructor() {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            play(freq, duration, type = 'sine') {
+                if (!this.audioCtx) return;
+                const oscillator = this.audioCtx.createOscillator();
+                const gainNode = this.audioCtx.createGain();
+                oscillator.connect(gainNode);
+                gainNode.connect(this.audioCtx.destination);
+                oscillator.type = type;
+                oscillator.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, this.audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, this.audioCtx.currentTime + duration);
+                oscillator.start(this.audioCtx.currentTime);
+                oscillator.stop(this.audioCtx.currentTime + duration);
+            }
+            bombPlaced() { this.play(300, 0.1, 'square'); }
+            explosion() { this.play(100, 0.5, 'triangle'); }
+            playerDied() { this.play(200, 0.3, 'sawtooth'); this.play(100, 0.3, 'sawtooth');}
+            victory() { this.play(500, 0.1); this.play(700, 0.1); this.play(900, 0.1); }
+        }
+        const sound = new Sound();
+
+        tileset.onload = () => {
+            console.log("Assets loaded.");
+            if(gameState.grid.length > 0) requestAnimationFrame(draw);
+        };
     </script>
 </body>
 </html>
