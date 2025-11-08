@@ -6,9 +6,10 @@
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div id="notifications"></div>
-    <canvas id="gameCanvas"></canvas>
-    <div id="overlay">
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+    <div id="overlay" style="display: none;">
         <div id="message"></div>
     </div>
 
@@ -18,166 +19,62 @@
         const ctx = canvas.getContext('2d');
         const overlay = document.getElementById('overlay');
         const messageEl = document.getElementById('message');
-        const notificationsEl = document.getElementById('notifications');
         const socket = io();
-
-        // Web Audio API setup
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-        function playSound(type) {
-            if (!audioCtx) return;
-            let oscillator, gainNode;
-
-            try {
-                oscillator = audioCtx.createOscillator();
-                gainNode = audioCtx.createGain();
-                oscillator.connect(gainNode);
-                gainNode.connect(audioCtx.destination);
-
-                gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-                gainNode.gain.linearRampToValueAtTime(0.3, audioCtx.currentTime + 0.01);
-
-                switch (type) {
-                    case 'placeBomb':
-                        oscillator.type = 'sine';
-                        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
-                        break;
-                    case 'explosion':
-                        oscillator.type = 'sawtooth';
-                        oscillator.frequency.setValueAtTime(160, audioCtx.currentTime);
-                        oscillator.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 0.3);
-                        break;
-                    case 'victory':
-                        oscillator.type = 'triangle';
-                        oscillator.frequency.setValueAtTime(523, audioCtx.currentTime);
-                        setTimeout(() => oscillator.frequency.setValueAtTime(659, audioCtx.currentTime + 0.1), 100);
-                        setTimeout(() => oscillator.frequency.setValueAtTime(783, audioCtx.currentTime + 0.2), 200);
-                        break;
-                    case 'playerDied':
-                        oscillator.type = 'square';
-                        oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
-                        oscillator.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.2);
-                        break;
-                }
-
-                oscillator.start(audioCtx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.3);
-                oscillator.stop(audioCtx.currentTime + 0.3);
-
-            } catch (e) {
-                console.error("Web Audio API error:", e);
-            }
-        }
-
-        function showNotification(message) {
-            const note = document.createElement('div');
-            note.className = 'notification';
-            note.textContent = message;
-            notificationsEl.appendChild(note);
-            setTimeout(() => {
-                note.remove();
-            }, 3000);
-        }
 
         const GRID_WIDTH = 15;
         const GRID_HEIGHT = 13;
-        let tileSize = 0;
+        const TILE_SIZE = 48;
 
-        function resizeCanvas() {
-            // ... (resize logic)
-            const aspectRatio = GRID_WIDTH / GRID_HEIGHT;
-            if (window.innerWidth / window.innerHeight > aspectRatio) {
-                canvas.height = window.innerHeight;
-                canvas.width = canvas.height * aspectRatio;
-            } else {
-                canvas.width = window.innerWidth;
-                canvas.height = canvas.width / aspectRatio;
-            }
-            tileSize = canvas.width / GRID_WIDTH;
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+        canvas.width = GRID_WIDTH * TILE_SIZE;
+        canvas.height = GRID_HEIGHT * TILE_SIZE;
 
-        let gameState = { players: {}, bombs: {}, explosions: {}, grid: [] };
-        let screenShake = 0;
+        let gameState = { players: {}, bombs: {}, explosions: {}, grid: [], winner: null };
+
+        const TILE_COLORS = {
+            0: '#1a1a1a', // EMPTY
+            1: '#4f4f4f', // SOLID
+            2: '#a0522d', // SOFT
+        };
 
         socket.on('gameState', (state) => {
             gameState = state;
-        });
-
-        socket.on('gameOver', (winner) => {
-            messageEl.innerHTML = `🏆 ${winner} wins!`;
-            overlay.style.display = 'flex';
-            playSound('victory');
-        });
-
-        socket.on('gameRestart', () => {
-            overlay.style.display = 'none';
-        });
-
-        socket.on('playerJoined', (msg) => {
-           showNotification(msg);
-        });
-
-        socket.on('playerDied', (player) => {
-            showNotification(`${player.nickname} was eliminated!`);
-            playSound('playerDied');
-        });
-
-        socket.on('playSound', (sound) => {
-            if (sound === 'explosion') {
-                screenShake = 15; // Set screen shake intensity
-            }
-            playSound(sound);
+            draw();
         });
 
         function draw() {
-            requestAnimationFrame(draw);
-            ctx.save();
-
-            if (screenShake > 0) {
-                const dx = (Math.random() - 0.5) * screenShake;
-                const dy = (Math.random() - 0.5) * screenShake;
-                ctx.translate(dx, dy);
-                screenShake *= 0.9; // Dampen the shake
-            }
-
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#101010';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            if (!gameState.grid) return;
+            if (!gameState.grid || gameState.grid.length === 0) return;
 
             // Draw grid and walls
             for (let y = 0; y < GRID_HEIGHT; y++) {
                 for (let x = 0; x < GRID_WIDTH; x++) {
-                    const tile = gameState.grid[y][x];
-                    if (tile === 1) { // Indestructible wall
-                        ctx.fillStyle = '#404040';
-                        ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
-                    } else if (tile === 2) { // Destructible wall
-                        ctx.fillStyle = '#808080';
-                        ctx.fillRect(x * tileSize, y * tileSize, tileSize * 0.9, tileSize * 0.9);
-                    }
+                    const tileType = gameState.grid[y][x];
+                    ctx.fillStyle = TILE_COLORS[tileType];
+                    ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
             }
 
             // Draw bombs
             for (const id in gameState.bombs) {
                 const bomb = gameState.bombs[id];
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(bomb.x * TILE_SIZE + TILE_SIZE / 2, bomb.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 2.5, 0, 2 * Math.PI);
+                ctx.fill();
                 ctx.fillStyle = '#FF4136';
                 ctx.beginPath();
-                ctx.arc(bomb.x * tileSize + tileSize / 2, bomb.y * tileSize + tileSize / 2, tileSize / 2.5, 0, 2 * Math.PI);
+                ctx.arc(bomb.x * TILE_SIZE + TILE_SIZE / 2, bomb.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 5, 0, 2 * Math.PI);
                 ctx.fill();
             }
 
             // Draw explosions
-             for (const id in gameState.explosions) {
+            for (const id in gameState.explosions) {
                 const explosion = gameState.explosions[id];
-                ctx.fillStyle = '#FFDC00';
+                ctx.fillStyle = 'rgba(255, 220, 0, 0.8)';
                 for(const tileKey in explosion.tiles) {
                     const [x, y] = tileKey.split(',').map(Number);
-                    ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                    ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
             }
 
@@ -186,17 +83,17 @@
                 const player = gameState.players[id];
                 if (!player.isAlive) continue;
                 ctx.fillStyle = player.color;
-                ctx.fillRect(player.x * tileSize, player.y * tileSize, tileSize * 0.8, tileSize * 0.8);
-
-                // Draw nickname
-                ctx.fillStyle = 'white';
-                ctx.font = `${tileSize / 5}px 'Press Start 2P'`;
-                ctx.textAlign = 'center';
-                ctx.fillText(player.nickname, player.x * tileSize + tileSize / 2, player.y * tileSize - 7);
+                ctx.fillRect(player.x * TILE_SIZE, player.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
             }
-            ctx.restore();
+
+            // Show winner message
+            if (gameState.winner) {
+                messageEl.innerHTML = `🏆 ${gameState.winner} Wins!`;
+                overlay.style.display = 'flex';
+            } else {
+                overlay.style.display = 'none';
+            }
         }
-        draw();
     </script>
 </body>
 </html>

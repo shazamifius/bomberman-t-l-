@@ -15,13 +15,13 @@
 
     <div id="game-controls" style="display: none;">
         <div class="d-pad">
-            <button class="control-btn" id="up">⬆️</button>
-            <button class="control-btn" id="left">⬅️</button>
-            <button class="control-btn" id="right">➡️</button>
-            <button class="control-btn" id="down">⬇️</button>
+            <button class="control-btn" data-direction="up">⬆️</button>
+            <button class="control-btn" data-direction="left">⬅️</button>
+            <button class="control-btn" data-direction="right">➡️</button>
+            <button class="control-btn" data-direction="down">⬇️</button>
         </div>
         <div class="action-pad">
-            <button class="bomb-btn" id="bomb">💣</button>
+            <button class="bomb-btn" id="bomb-btn">💣</button>
         </div>
     </div>
 
@@ -32,6 +32,11 @@
         const gameControls = document.getElementById('game-controls');
         const joinBtn = document.getElementById('join-btn');
         const nicknameInput = document.getElementById('nickname');
+        const dpadButtons = document.querySelectorAll('.control-btn');
+        const bombBtn = document.getElementById('bomb-btn');
+
+        let lastMoveTime = 0;
+        const MOVE_COOLDOWN = 200; // 200ms
 
         joinBtn.addEventListener('click', () => {
             const nickname = nicknameInput.value.trim();
@@ -40,40 +45,20 @@
             gameControls.style.display = 'flex';
         });
 
-        const buttons = {
-            up: document.getElementById('up'),
-            down: document.getElementById('down'),
-            left: document.getElementById('left'),
-            right: document.getElementById('right'),
-            bomb: document.getElementById('bomb'),
-        };
+        dpadButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const now = Date.now();
+                if (now - lastMoveTime > MOVE_COOLDOWN) {
+                    const direction = button.dataset.direction;
+                    socket.emit('move', direction);
+                    lastMoveTime = now;
+                    if (navigator.vibrate) navigator.vibrate(50);
+                }
+            });
+        });
 
-        let movementInterval = null;
-
-        function handleMove(direction) {
-            clearInterval(movementInterval);
-            movementInterval = setInterval(() => {
-                socket.emit('move', direction);
-            }, 50); // Send move event every 50ms while held
-             if (navigator.vibrate) navigator.vibrate(50);
-        }
-
-        function stopMove() {
-            clearInterval(movementInterval);
-        }
-
-        buttons.up.addEventListener('touchstart', () => handleMove('up'));
-        buttons.down.addEventListener('touchstart', () => handleMove('down'));
-        buttons.left.addEventListener('touchstart', () => handleMove('left'));
-        buttons.right.addEventListener('touchstart', () => handleMove('right'));
-
-        buttons.up.addEventListener('touchend', stopMove);
-        buttons.down.addEventListener('touchend', stopMove);
-        buttons.left.addEventListener('touchend', stopMove);
-        buttons.right.addEventListener('touchend', stopMove);
-
-        buttons.bomb.addEventListener('click', () => {
-            socket.emit('placeBomb');
+        bombBtn.addEventListener('click', () => {
+            socket.emit('bomb');
             if (navigator.vibrate) navigator.vibrate(100);
         });
 
@@ -87,11 +72,6 @@
             alert("Disconnected from server.");
             joinScreen.style.display = 'flex';
             gameControls.style.display = 'none';
-        });
-
-        socket.on('gameRestart', () => {
-            // Can optionally go back to the join screen, but for now, we'll let them stay connected
-            console.log("A new round is starting!");
         });
     </script>
 </body>
