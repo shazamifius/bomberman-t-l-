@@ -12,7 +12,7 @@ const GRID_WIDTH = 21;
 const GRID_HEIGHT = 21;
 const TICK_RATE = 20;
 const BOMB_TIMER = 3000;
-const EXPLOSION_DURATION = 500;
+const EXPLOSION_DURATION = 3000;
 const GAME_RESTART_DELAY = 5000;
 const POWER_UP_SPAWN_CHANCE = 0.3;
 
@@ -80,26 +80,47 @@ class GameState {
     }
 
     initializeGrid() {
-        // ... (grid initialization)
         this.grid = Array(GRID_HEIGHT).fill(null).map(() => Array(GRID_WIDTH).fill(TILE.EMPTY));
 
+        // 1. Generate the inverted map
         for (let y = 0; y < GRID_HEIGHT; y++) {
             for (let x = 0; x < GRID_WIDTH; x++) {
-                if (y === 0 || y === GRID_HEIGHT - 1 || x === 0 || x === GRID_WIDTH - 1 || (x % 2 === 0 && y % 2 === 0)) {
+                const isBorder = y === 0 || y === GRID_HEIGHT - 1 || x === 0 || x === GRID_WIDTH - 1;
+                const wasPillarInOldMap = (x % 2 === 0 && y % 2 === 0);
+
+                if (isBorder) {
                     this.grid[y][x] = TILE.SOLID;
+                } else {
+                    // Inside the border, invert the logic
+                    if (wasPillarInOldMap) {
+                        this.grid[y][x] = TILE.EMPTY; // Pillars become empty
+                    } else {
+                        this.grid[y][x] = TILE.SOLID; // Paths become solid
+                    }
                 }
             }
         }
 
+        // 2. Define spawn zones and ensure they are clear of any blocks
         let spawnZones = [];
         PLAYER_SPAWNS.forEach(spawn => {
             for(let dy = -1; dy <= 1; dy++) {
                 for(let dx = -1; dx <=1; dx++) {
-                    spawnZones.push({x: spawn.x + dx, y: spawn.y + dy});
+                    const sx = spawn.x + dx;
+                    const sy = spawn.y + dy;
+                    // Check bounds just in case, though spawns are well within bounds
+                    if (sx >= 0 && sx < GRID_WIDTH && sy >= 0 && sy < GRID_HEIGHT) {
+                       // Don't clear the outer border wall
+                       if (sx !== 0 && sx !== GRID_WIDTH - 1 && sy !== 0 && sy !== GRID_HEIGHT - 1) {
+                           this.grid[sy][sx] = TILE.EMPTY;
+                           spawnZones.push({x: sx, y: sy});
+                       }
+                    }
                 }
             }
         });
 
+        // 3. Place soft blocks randomly on available empty tiles, avoiding spawn zones
         for (let y = 1; y < GRID_HEIGHT - 1; y++) {
             for (let x = 1; x < GRID_WIDTH - 1; x++) {
                 if (this.grid[y][x] === TILE.EMPTY) {
@@ -420,13 +441,13 @@ io.on('connection', (socket) => {
 
 function gameLoop() {
     if (gameState.isGameOver) return; // Pause game logic when game is over
-    gameState.diffs = [];
     gameState.updateBombs();
     gameState.updateExplosions();
     gameState.checkForWinner();
 
     if (gameState.diffs.length > 0) {
         io.emit('gameUpdate', gameState.diffs);
+        gameState.diffs = [];
     }
 }
 
